@@ -1,0 +1,167 @@
+<!DOCTYPE html><html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MonadPets</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Ethers.js -->
+  <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
+  <style>
+    /* Glassmorphism background for cards */
+    .glass {
+      background: rgba(255, 255, 255, 0.2);
+      backdrop-filter: blur(10px);
+    }
+  </style>
+</head>
+<body class="bg-gradient-to-r from-purple-500 to-blue-400 min-h-screen flex flex-col items-center p-6">
+  <header class="w-full max-w-4xl text-center mb-8">
+    <h1 class="text-4xl font-bold text-white drop-shadow-lg">MonadPets</h1>
+    <p class="mt-2 text-white/80">Your on-chain pet playground on Monad Testnet</p>
+  </header>  <div class="flex space-x-4 mb-6">
+    <button id="btnConnect" class="px-6 py-3 bg-green-500 hover:bg-green-600 text-white rounded-lg shadow-lg transition">
+      Connect Wallet
+    </button>
+    <button id="btnAdopt" class="px-6 py-3 bg-yellow-400 hover:bg-yellow-500 text-white rounded-lg shadow-lg transition" disabled>
+      Adopt Pet
+    </button>
+  </div>  <p id="notification" class="text-white font-semibold mb-6"></p>  <section id="petsContainer" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 w-full max-w-5xl">
+    <!-- Pet cards will be injected here -->
+  </section>  <script>
+    const CONTRACT_ADDRESS = "0xb9Ce1E20B6C0efa5a90611B3DF94C8f3586aBA30";
+    const ABI = [
+      { "inputs": [], "name": "adoptPet", "outputs": [{ "internalType": "uint256","name": "","type": "uint256" }],"stateMutability": "nonpayable","type": "function" },
+      { "inputs": [{ "internalType": "uint256","name": "petId","type": "uint256" }],"name": "feedPet","outputs": [],"stateMutability": "nonpayable","type": "function" },
+      { "inputs": [{ "internalType": "uint256","name": "petId","type": "uint256" }],"name": "playWithPet","outputs": [],"stateMutability": "nonpayable","type": "function" },
+      { "inputs": [],"name": "getMyPets","outputs": [{ "internalType": "uint256[]","name": "","type": "uint256[]" }],"stateMutability": "view","type": "function" },
+      { "inputs": [{ "internalType": "uint256","name": "petId","type": "uint256" }],"name": "getPetStatus","outputs": [
+          { "internalType": "uint256","name": "hunger","type": "uint256" },
+          { "internalType": "uint256","name": "happiness","type": "uint256" },
+          { "internalType": "uint256","name": "lastUpdate","type": "uint256" }
+        ],"stateMutability": "view","type": "function" },
+      { "anonymous": false,"inputs": [
+          { "indexed": true,"internalType": "address","name": "owner","type": "address" },
+          { "indexed": false,"internalType": "uint256","name": "petId","type": "uint256" }
+        ],"name": "PetAdopted","type": "event" },
+      { "anonymous": false,"inputs": [
+          { "indexed": true,"internalType": "uint256","name": "petId","type": "uint256" },
+          { "indexed": false,"internalType": "uint256","name": "newHunger","type": "uint256" }
+        ],"name": "PetFed","type": "event" },
+      { "anonymous": false,"inputs": [
+          { "indexed": true,"internalType": "uint256","name": "petId","type": "uint256" },
+          { "indexed": false,"internalType": "uint256","name": "newHappiness","type": "uint256" }
+        ],"name": "PetPlayed","type": "event" }
+    ];
+
+    let provider, signer, contract;
+
+    async function connectWallet() {
+      if (!window.ethereum) {
+        return notify('MetaMask not detected. Please install it.');
+      }
+      try {
+        await window.ethereum.request({ method: 'eth_requestAccounts' });
+        provider = new ethers.providers.Web3Provider(window.ethereum);
+        signer = provider.getSigner();
+        contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+        notify('Wallet connected 🎉');
+        document.getElementById('btnConnect').disabled = true;
+        document.getElementById('btnAdopt').disabled = false;
+        loadPets();
+        subscribeToEvents();
+      } catch (err) {
+        notify('Error: ' + err.message);
+      }
+    }
+
+    async function adoptPet() {
+      try {
+        const tx = await contract.adoptPet();
+        notify('Transaction sent, waiting for confirmation...');
+        await tx.wait();
+        notify('Pet adopted successfully! 🐾');
+        loadPets();
+      } catch (err) {
+        notify('Error: ' + err.message);
+      }
+    }
+
+    async function loadPets() {
+      const ids = await contract.getMyPets();
+      const container = document.getElementById('petsContainer');
+      container.innerHTML = '';
+      for (let id of ids) {
+        const [hunger, happiness, lastUpdate] = await contract.getPetStatus(id);
+        container.appendChild(createPetCard(id, hunger, happiness, lastUpdate));
+      }
+    }
+
+    function createPetCard(id, hunger, happiness, lastUpdate) {
+      const card = document.createElement('div');
+      card.className = 'glass p-6 rounded-2xl shadow-lg relative';
+      card.innerHTML = `
+        <h2 class="text-2xl font-semibold mb-2">Pet #${id}</h2>
+        <p>Hunger: ${hunger}</p>
+        <p>Happiness: ${happiness}</p>
+        <p class="text-sm text-gray-700">Last update: ${new Date(lastUpdate.toNumber() * 1000).toLocaleString()}</p>
+        <div class="mt-4 space-x-2">
+          <button onclick="feed(${id})" class="px-4 py-2 bg-red-400 hover:bg-red-500 text-white rounded-lg">Feed</button>
+          <button onclick="play(${id})" class="px-4 py-2 bg-blue-400 hover:bg-blue-500 text-white rounded-lg">Play</button>
+        </div>
+      `;
+      return card;
+    }
+
+    async function feed(id) {
+      try {
+        const tx = await contract.feedPet(id);
+        notify(`Feeding pet #${id}...`);
+        await tx.wait();
+        notify(`Pet #${id} fed! 🍖`);
+        loadPets();
+      } catch (err) {
+        notify('Error: ' + err.message);
+      }
+    }
+
+    async function play(id) {
+      try {
+        const tx = await contract.playWithPet(id);
+        notify(`Playing with pet #${id}...`);
+        await tx.wait();
+        notify(`Pet #${id} is happier! 🎾`);
+        loadPets();
+      } catch (err) {
+        notify('Error: ' + err.message);
+      }
+    }
+
+    function notify(message) {
+      const notif = document.getElementById('notification');
+      notif.textContent = message;
+      setTimeout(() => { notif.textContent = ''; }, 5000);
+    }
+
+    function subscribeToEvents() {
+      contract.on('PetAdopted', (owner, petId) => {
+        if (owner.toLowerCase() === signer.getAddress().toLowerCase()) {
+          notify(`Event: You adopted pet #${petId} 🐾`);
+          loadPets();
+        }
+      });
+      contract.on('PetFed', (petId, newHunger) => {
+        notify(`Event: Pet #${petId} hunger is now ${newHunger}`);
+        loadPets();
+      });
+      contract.on('PetPlayed', (petId, newHappiness) => {
+        notify(`Event: Pet #${petId} happiness is now ${newHappiness}`);
+        loadPets();
+      });
+    }
+
+    // Bind events
+    document.getElementById('btnConnect').addEventListener('click', connectWallet);
+    document.getElementById('btnAdopt').addEventListener('click', adoptPet);
+  </script></body>
+</html>
